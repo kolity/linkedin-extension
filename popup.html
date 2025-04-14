@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>LinkedIn Data Collector</title>
+  <meta charset="utf-8">
+  <style>
+    body {
+      width: 400px;
+      font-family: Arial, sans-serif;
+      padding: 10px;
+    }
+    .container {
+      margin-bottom: 15px;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    .header h1 {
+      font-size: 18px;
+      margin: 0;
+    }
+    button {
+      background-color: #0077b5;
+      color: white;
+      border: none;
+      padding: 8px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    button:disabled {
+      background-color: #ccc;
+      cursor: not-allowed;
+    }
+    button.secondary {
+      background-color: #f5f5f5;
+      color: #333;
+      border: 1px solid #ddd;
+    }
+    .status {
+      margin-top: 10px;
+      padding: 8px;
+      border-radius: 4px;
+    }
+    .success {
+      background-color: #e6f4ea;
+      color: #137333;
+    }
+    .error {
+      background-color: #fce8e6;
+      color: #c5221f;
+    }
+    .section {
+      margin-bottom: 15px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      padding: 10px;
+    }
+    .section-header {
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
+    label {
+      display: block;
+      margin-bottom: 5px;
+    }
+    input[type="text"], select {
+      width: 100%;
+      padding: 6px;
+      margin-bottom: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+    }
+    .toggle-switch {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 40px;
+      height: 20px;
+    }
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #ccc;
+      transition: .4s;
+      border-radius: 20px;
+    }
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 16px;
+      width: 16px;
+      left: 2px;
+      bottom: 2px;
+      background-color: white;
+      transition: .4s;
+      border-radius: 50%;
+    }
+    input:checked + .slider {
+      background-color: #0077b5;
+    }
+    input:checked + .slider:before {
+      transform: translateX(20px);
+    }
+    .stats {
+      display: flex;
+      justify-content: space-between;
+      background-color: #f5f5f5;
+      padding: 10px;
+      border-radius: 4px;
+      margin-bottom: 10px;
+    }
+    .stat-item {
+      text-align: center;
+    }
+    .stat-value {
+      font-weight: bold;
+      font-size: 18px;
+    }
+    .stat-label {
+      font-size: 12px;
+      color: #666;
+    }
+    .tabs {
+      display: flex;
+      border-bottom: 1px solid #ddd;
+      margin-bottom: 10px;
+    }
+    .tab {
+      padding: 8px 15px;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+    }
+    .tab.active {
+      border-bottom: 2px solid #0077b5;
+      font-weight: bold;
+    }
+    .tab-content {
+      display: none;
+    }
+    .tab-content.active {
+      display: block;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th, td {
+      text-align: left;
+      padding: 8px;
+      border-bottom: 1px solid #ddd;
+    }
+    th {
+      background-color: #f5f5f5;
+    }
+    .action-buttons {
+      display: flex;
+      justify-content: space-between;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>LinkedIn Data Collector</h1>
+    <div>
+      <span id="connectionStatus"></span>
+    </div>
+  </div>
+  
+  <div class="stats">
+    <div class="stat-item">
+      <div class="stat-value" id="profilesCollected">0</div>
+      <div class="stat-label">Profiles</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-value" id="todayCount">0</div>
+      <div class="stat-label">Today</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-value" id="queueCount">0</div>
+      <div class="stat-label">Queue</div>
+    </div>
+  </div>
+  
+  <div class="tabs">
+    <div class="tab active" data-tab="collect">Collect</div>
+    <div class="tab" data-tab="queue">Queue</div>
+    <div class="tab" data-tab="settings">Settings</div>
+  </div>
+  
+  <div class="tab-content active" id="collect-tab">
+    <div class="section">
+      <div class="section-header">Current Profile</div>
+      <div id="currentProfile">No LinkedIn profile detected</div>
+      <div id="profileData" style="margin-top:10px; display: none;">
+        <table>
+          <tr>
+            <td>Name:</td>
+            <td id="profileName"></td>
+          </tr>
+          <tr>
+            <td>Title:</td>
+            <td id="profileTitle"></td>
+          </tr>
+          <tr>
+            <td>Company:</td>
+            <td id="profileCompany"></td>
+          </tr>
+        </table>
+      </div>
+      <div class="action-buttons" style="margin-top:10px;">
+        <button id="collectProfile" disabled>Collect Profile</button>
+        <button id="addToQueue" class="secondary" disabled>Add to Queue</button>
+      </div>
+    </div>
+    
+    <div class="section">
+      <div class="section-header">Bulk Collection</div>
+      <div class="toggle-switch">
+        <span>Auto-collect profiles while browsing</span>
+        <label class="switch">
+          <input type="checkbox" id="autoCollect">
+          <span class="slider"></span>
+        </label>
+      </div>
+      <button id="collectConnections">Collect Your Connections</button>
+      <div style="margin-top:10px;">
+        <button id="collectSearchResults">Collect Search Results</button>
+      </div>
+    </div>
+  </div>
+  
+  <div class="tab-content" id="queue-tab">
+    <div class="section">
+      <div class="section-header">Profile Queue</div>
+      <div id="queueList" style="max-height: 300px; overflow-y: auto;">
+        <table id="queueTable">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>URL</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="queueTableBody">
+            <!-- Queue items will be inserted here -->
+          </tbody>
+        </table>
+      </div>
+      <div style="margin-top:10px; display:flex; justify-content:space-between;">
+        <button id="processQueue">Process Queue</button>
+        <button id="clearQueue" class="secondary">Clear Queue</button>
+      </div>
+    </div>
+  </div>
+  
+  <div class="tab-content" id="settings-tab">
+    <div class="section">
+      <div class="section-header">API Configuration</div>
+      <label for="apiUrl">Backend API URL</label>
+      <input type="text" id="apiUrl" placeholder="https://your-api-server.com">
+      
+      <label for="apiKey">API Key (if required)</label>
+      <input type="text" id="apiKey" placeholder="Your API key">
+      
+      <button id="testConnection" style="margin-top:5px;">Test Connection</button>
+    </div>
+    
+    <div class="section">
+      <div class="section-header">Collection Settings</div>
+      <div class="toggle-switch">
+        <span>Collect contact info</span>
+        <label class="switch">
+          <input type="checkbox" id="collectContactInfo">
+          <span class="slider"></span>
+        </label>
+      </div>
+      
+      <div class="toggle-switch">
+        <span>Collect experiences</span>
+        <label class="switch">
+          <input type="checkbox" id="collectExperiences" checked>
+          <span class="slider"></span>
+        </label>
+      </div>
+      
+      <div class="toggle-switch">
+        <span>Collect education</span>
+        <label class="switch">
+          <input type="checkbox" id="collectEducation" checked>
+          <span class="slider"></span>
+        </label>
+      </div>
+      
+      <div class="toggle-switch">
+        <span>Collect skills</span>
+        <label class="switch">
+          <input type="checkbox" id="collectSkills" checked>
+          <span class="slider"></span>
+        </label>
+      </div>
+      
+      <label for="delay">Delay between collection (seconds)</label>
+      <input type="text" id="delay" placeholder="3" value="3">
+    </div>
+    
+    <div class="action-buttons">
+      <button id="saveSettings">Save Settings</button>
+      <button id="resetSettings" class="secondary">Reset</button>
+    </div>
+  </div>
+  
+  <div id="statusMessage" style="display: none;"></div>
+  
+  <script src="popup.js"></script>
+</body>
+</html>
