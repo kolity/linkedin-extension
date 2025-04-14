@@ -1,114 +1,199 @@
-// --------------------------------------------------
-// File: backend-api-example/server.js
-// --------------------------------------------------
-// Example Node.js backend API for the LinkedIn Data Collector
+// Example Node.js backend API with PostgreSQL for the LinkedIn Data Collector
 
 const express = require('express');
-const mongoose = require('mongoose');
 const cors = require('cors');
 const bodyParser = require('body-parser');
-const Profile = require('./models/profile');
+const { Pool } = require('pg');
+const profileService = require('./services/profileService');
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Create PostgreSQL connection pool
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/linkedin_data',
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+});
+
+// Pass DB pool to the profile service
+profileService.initialize(pool);
+
 // Middleware
 app.use(cors());
 app.use(bodyParser.json({ limit: '5mb' }));
 
-// Connect to MongoDB
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/linkedin_data', {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-})
-.then(() => console.log('Connected to MongoDB'))
-.catch(err => console.error('MongoDB connection error:', err));
+// Debug middleware to log all requests
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
+  next();
+});
+
+// Database connection check
+app.use(async (req, res, next) => {
+  try {
+    // Ping database on each request to ensure connection
+    await pool.query('SELECT NOW()');
+    next();
+  } catch (err) {
+    console.error('Database connection error:', err);
+    res.status(500).json({ success: false, error: 'Database connection error' });
+  }
+});
 
 // Simple health check endpoint
 app.get('/ping', (req, res) => {
   res.json({ status: 'ok', message: 'API is running' });
 });
 
+// Test database connection endpoint
+app.get('/test-db', async (req, res) => {
+  try {
+    const client = await pool.connect();
+    const result = await client.query('SELECT NOW() as time');
+    client.release();
+    
+    res.json({ 
+      success: true, 
+      message: 'Database connection successful',
+      timestamp: result.rows[0].time
+    });
+  } catch (error) {
+    console.error('Database connection test failed:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Direct insert test endpoint
+app.get('/test-insert', async (req, res) => {
+  const client = await pool.connect();
+  
+  try {
+    console.log("Starting test insert transaction");
+    await client.query('BEGIN');
+    
+    const testUrl = 'https://www.linkedin.com/in/test-user-' + Date.now();
+    console.log("Inserting test profile with URL:", testUrl);
+    
+    const insertResult = await client.query(
+      `INSERT INTO profiles 
+       (name, title, company, url, source, collected_at, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
+       RETURNING id`,
+      [
+        'Test User',
+        'Test Title',
+        'Test Company',
+        testUrl,
+        'test',
+        new Date()
+      ]
+    );
+    
+    const profileId = insertResult.rows[0].id;
+    console.log("Test profile inserted with ID:", profileId);
+    
+    await client.query('COMMIT');
+    console.log("Transaction committed");
+    
+    res.json({ 
+      success: true, 
+      message: 'Test profile inserted successfully',
+      profileId,
+      url: testUrl
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Test insert failed:', error);
+    res.status(500).json({ success: false, error: error.message });
+  } finally {
+    client.release();
+  }
+});
+
+// List tables endpoint
+app.get('/debug/tables', async (req, res) => {
+  try {
+    const client = await pool.connect();
+    const tablesResult = await client.query(
+      "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'"
+    );
+    client.release();
+    
+    res.json({
+      success: true,
+      tables: tablesResult.rows.map(row => row.table_name)
+    });
+  } catch (error) {
+    console.error('Error listing tables:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Save a single profile
 app.post('/profiles', async (req, res) => {
   try {
+    console.log("=== PROFILE REQUEST RECEIVED ===");
+    console.log("Headers:", JSON.stringify(req.headers));
+    console.log("Body:", JSON.stringify(req.body));
+    
     const profileData = req.body;
     
-    // Check if profile already exists (based on LinkedIn URL)
-    const existingProfile = await Profile.findOne({ url: profileData.url });
+    // Check for required fields
+    if (!profileData || !profileData.url) {
+      console.log("Missing required field: url");
+      return res.status(400).json({ success: false, error: 'URL is required' });
+    }
     
-    if (existingProfile) {
-      // Update existing profile
-      const updatedProfile = await Profile.findByIdAndUpdate(
-        existingProfile._id,
-        { ...profileData, updatedAt: new Date() },
-        { new: true }
-      );
+    console.log("Saving profile to database:", profileData.url);
+    
+    try {
+      // Check if profile already exists and update or create
+      const result = await profileService.saveProfile(profileData);
+      
+      console.log("Profile saved successfully:", result.updated ? "Updated" : "Created new", "ID:", result.profile.id);
       
       res.json({ 
         success: true, 
-        message: 'Profile updated',
-        profile: updatedProfile,
-        updated: true
+        message: result.updated ? 'Profile updated' : 'Profile saved',
+        profile: result.profile,
+        updated: result.updated
       });
-    } else {
-      // Create new profile
-      const profile = new Profile(profileData);
-      await profile.save();
-      
-      res.json({ 
-        success: true, 
-        message: 'Profile saved',
-        profile: profile,
-        updated: false
+    } catch (serviceError) {
+      console.error('Error in profile service:', serviceError);
+      res.status(500).json({ 
+        success: false, 
+        error: serviceError.message,
+        stack: process.env.NODE_ENV === 'development' ? serviceError.stack : undefined
       });
     }
   } catch (error) {
-    console.error('Error saving profile:', error);
-    res.status(500).json({ success: false, error: error.message });
+    console.error('Error handling profile request:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 });
 
 // Bulk save profiles
 app.post('/profiles/bulk', async (req, res) => {
   try {
+    console.log("=== BULK PROFILES REQUEST RECEIVED ===");
+    console.log("Number of profiles:", req.body.profiles ? req.body.profiles.length : 0);
+    
     const { profiles } = req.body;
     
     if (!profiles || !Array.isArray(profiles)) {
       return res.status(400).json({ success: false, error: 'Invalid profiles data' });
     }
     
-    const results = {
-      added: 0,
-      updated: 0,
-      failed: 0
-    };
+    // Process all profiles
+    console.log("Processing bulk profiles");
+    const results = await profileService.bulkSaveProfiles(profiles);
     
-    // Process each profile
-    for (const profileData of profiles) {
-      try {
-        // Check if profile already exists
-        const existingProfile = await Profile.findOne({ url: profileData.url });
-        
-        if (existingProfile) {
-          // Update existing profile
-          await Profile.findByIdAndUpdate(
-            existingProfile._id,
-            { ...profileData, updatedAt: new Date() }
-          );
-          results.updated++;
-        } else {
-          // Create new profile
-          const profile = new Profile(profileData);
-          await profile.save();
-          results.added++;
-        }
-      } catch (error) {
-        console.error('Error processing profile:', error);
-        results.failed++;
-      }
-    }
+    console.log("Bulk processing completed:", results);
     
     res.json({ 
       success: true, 
@@ -121,27 +206,26 @@ app.post('/profiles/bulk', async (req, res) => {
   }
 });
 
-// Get all profiles
+// Get all profiles with pagination
 app.get('/profiles', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 100;
-    const skip = parseInt(req.query.skip) || 0;
+    const offset = parseInt(req.query.offset) || 0;
     
-    const profiles = await Profile.find({})
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .skip(skip);
+    console.log(`Getting profiles with limit=${limit}, offset=${offset}`);
     
-    const total = await Profile.countDocuments();
+    const result = await profileService.getProfiles(limit, offset);
+    
+    console.log(`Retrieved ${result.profiles.length} profiles out of ${result.total} total`);
     
     res.json({
       success: true,
-      profiles,
+      profiles: result.profiles,
       pagination: {
-        total,
+        total: result.total,
         limit,
-        skip,
-        hasMore: skip + profiles.length < total
+        offset,
+        hasMore: offset + result.profiles.length < result.total
       }
     });
   } catch (error) {
@@ -150,42 +234,42 @@ app.get('/profiles', async (req, res) => {
   }
 });
 
-// Get stats
-app.get('/stats', async (req, res) => {
+// Get a specific profile by URL
+app.get('/profiles/url/:encodedUrl', async (req, res) => {
   try {
-    const total = await Profile.countDocuments();
+    const url = decodeURIComponent(req.params.encodedUrl);
+    console.log("Looking up profile by URL:", url);
     
-    // Count profiles added today
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const todayCount = await Profile.countDocuments({ 
-      createdAt: { $gte: today } 
-    });
+    const profile = await profileService.getProfileByUrl(url);
     
-    // Count profiles by source
-    const sources = await Profile.aggregate([
-      { $group: { _id: '$source', count: { $sum: 1 } } }
-    ]);
-    
-    // Companies with most profiles
-    const companies = await Profile.aggregate([
-      { $match: { 'company': { $exists: true, $ne: '' } } },
-      { $group: { _id: '$company', count: { $sum: 1 } } },
-      { $sort: { count: -1 } },
-      { $limit: 10 }
-    ]);
+    if (!profile) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Profile not found' 
+      });
+    }
     
     res.json({
       success: true,
-      stats: {
-        total,
-        todayCount,
-        sources: sources.reduce((acc, src) => {
-          acc[src._id || 'unknown'] = src.count;
-          return acc;
-        }, {}),
-        topCompanies: companies
-      }
+      profile
+    });
+  } catch (error) {
+    console.error('Error fetching profile by URL:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get stats
+app.get('/stats', async (req, res) => {
+  try {
+    console.log("Getting stats");
+    const stats = await profileService.getStats();
+    
+    console.log("Stats retrieved:", stats);
+    
+    res.json({
+      success: true,
+      stats
     });
   } catch (error) {
     console.error('Error fetching stats:', error);
@@ -193,7 +277,38 @@ app.get('/stats', async (req, res) => {
   }
 });
 
+// Error handler middleware
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({ 
+    success: false, 
+    error: err.message,
+    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
+  });
+});
+
 // Start server
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  console.log(`API health check available at http://localhost:${PORT}/ping`);
+  console.log(`Database test available at http://localhost:${PORT}/test-db`);
+  console.log(`Test insert available at http://localhost:${PORT}/test-insert`);
 });
+
+// Handle server shutdown
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+
+async function shutdown() {
+  console.log('Shutting down server...');
+  
+  try {
+    // Close database pool
+    await pool.end();
+    console.log('Database pool closed');
+  } catch (err) {
+    console.error('Error during cleanup:', err);
+  }
+  
+  process.exit(0);
+}

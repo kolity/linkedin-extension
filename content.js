@@ -460,45 +460,98 @@ chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
     });
   }
   
-  // Collect connections from connections page
+ 
   function collectConnections(settings, sendResponse) {
-    // Check if we're on the connections page
-    if (!window.location.href.includes('linkedin.com/mynetwork/')) {
-      sendResponse({started: false, error: 'Not on connections page'});
+    // Check if we're on a LinkedIn page
+    if (!window.location.href.includes('linkedin.com/')) {
+      sendResponse({started: false, error: 'Not on LinkedIn'});
       return;
     }
     
     sendResponse({started: true});
+    console.log("Starting connection collection process");
     
     // Setup for tracking progress
     let processedCount = 0;
-    const delay = settings.delay * 1000;
+    const delay = (settings?.delay || 3) * 1000;
     
     // Create floating status indicator
     createStatusIndicator();
-    updateStatusIndicator(`Starting collection...`);
+    updateStatusIndicator(`Starting connection collection...`);
     
     // Function to process connections
     function processConnections() {
-      // Get all connection cards
-      const connectionCards = document.querySelectorAll('li.mn-connection-card');
+      // Expand connections if any "Show more" buttons exist
+      const showMoreButtons = document.querySelectorAll('button[aria-label*="Show more"], button.artdeco-button--tertiary');
+      if (showMoreButtons.length > 0) {
+        console.log("Found Show more buttons:", showMoreButtons.length);
+        showMoreButtons.forEach(btn => {
+          try {
+            btn.click();
+            console.log("Clicked a 'Show more' button");
+          } catch (e) {
+            console.error("Error clicking button:", e);
+          }
+        });
+      }
       
-      if (connectionCards.length === 0) {
-        updateStatusIndicator(`No connections found on page. Try scrolling to load more.`);
+      // Try to find any links that might be connection profiles
+      let profileLinks = [];
+      
+      // First look for standard connection structures
+      const personSelectors = [
+        'li.mn-connection-card a[href*="/in/"]',
+        '.scaffold-finite-scroll__content li a[href*="/in/"]',
+        '.artdeco-list__item a[href*="/in/"]',
+        '.mn-connections-list li a[href*="/in/"]',
+        '.pvs-list__item--line-separated a[href*="/in/"]',
+        'li a[href*="/in/"]' // Most aggressive - any li with a LinkedIn profile link
+      ];
+      
+      // Try each selector
+      for (const selector of personSelectors) {
+        const links = document.querySelectorAll(selector);
+        if (links && links.length > 0) {
+          console.log(`Found ${links.length} profile links using selector: ${selector}`);
+          profileLinks = Array.from(links);
+          break;
+        }
+      }
+      
+      // If nothing found with standard selectors, get aggressive
+      if (profileLinks.length === 0) {
+        console.log("No links found with standard selectors, trying all links");
+        // Get all links that might be profile links
+        const allLinks = document.querySelectorAll('a[href*="/in/"]');
+        profileLinks = Array.from(allLinks);
+        console.log(`Found ${profileLinks.length} generic profile links`);
+      }
+      
+      if (profileLinks.length === 0) {
+        console.log("Still no links found - page structure may have changed completely");
+        updateStatusIndicator(`No connections found. LinkedIn's page structure may have changed.`);
+        console.log("Page HTML (first 1000 chars):", document.body.innerHTML.substring(0, 1000));
+        
+        // Scroll and try again after delay
+        window.scrollTo(0, document.body.scrollHeight);
+        setTimeout(processConnections, 2000);
         return;
       }
       
-      // Process one connection at a time with delay
-      function processNextConnection(index) {
-        if (index >= connectionCards.length) {
-          // Scroll down to load more connections
+      updateStatusIndicator(`Found ${profileLinks.length} potential connections. Processing...`);
+      
+      // Process one profile link at a time
+      function processNextProfile(index) {
+        if (index >= profileLinks.length) {
+          // Scroll down to load more
           window.scrollTo(0, document.body.scrollHeight);
+          console.log("Scrolled to bottom, waiting for more connections to load");
           
-          // Wait and check if new connections loaded
+          // Wait and check if new links loaded
           setTimeout(() => {
-            const newCount = document.querySelectorAll('li.mn-connection-card').length;
-            if (newCount > connectionCards.length) {
-              // New connections loaded, process them
+            const newLinks = document.querySelectorAll('a[href*="/in/"]');
+            if (newLinks.length > profileLinks.length) {
+              console.log(`Found ${newLinks.length - profileLinks.length} new links after scrolling`);
               processConnections();
             } else {
               updateStatusIndicator(`Completed collecting ${processedCount} connections`);
@@ -508,42 +561,79 @@ chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
           return;
         }
         
-        const card = connectionCards[index];
+        const link = profileLinks[index];
         
         try {
-          // Extract data from the card
-          const nameElement = card.querySelector('.mn-connection-card__name');
-          const occupationElement = card.querySelector('.mn-connection-card__occupation');
-          const profileLinkElement = card.querySelector('a.mn-connection-card__link');
+          // Get name from closest heading or span
+          let name = '';
+          const nameElement = 
+            link.querySelector('.artdeco-entity-lockup__title') || 
+            link.querySelector('.mn-connection-card__name') ||
+            link.querySelector('.t-16') ||
+            link.closest('li')?.querySelector('span[aria-hidden="true"]');
+            
+          if (nameElement) {
+            name = nameElement.textContent.trim();
+          }
           
-          if (nameElement && profileLinkElement) {
+          // If no name found, try to get it from the link's text content
+          if (!name) {
+            const textContent = link.textContent.trim();
+            if (textContent && textContent.length < 50) { // Reasonable name length
+              name = textContent;
+            }
+          }
+          
+          // Get title/occupation
+          let title = '';
+          const titleElement = 
+            link.querySelector('.artdeco-entity-lockup__subtitle') ||
+            link.querySelector('.mn-connection-card__occupation') ||
+            link.querySelector('.t-14') ||
+            link.closest('li')?.querySelector('.t-14.t-black--light');
+            
+          if (titleElement) {
+            title = titleElement.textContent.trim();
+          }
+          
+          // Only process if we have at least a valid link
+          if (link.href && link.href.includes('/in/')) {
             const profileData = {
-              name: nameElement.textContent.trim(),
-              title: occupationElement ? occupationElement.textContent.trim() : '',
-              url: profileLinkElement.href,
+              name: name || 'Unknown Name',
+              title: title || '',
+              url: link.href,
               source: 'connections',
               collectedAt: new Date().toISOString()
             };
+            
+            console.log("Processing connection:", profileData);
             
             // Add to queue
             chrome.runtime.sendMessage({
               action: 'addToQueue',
               profileData: profileData
+            }, function(response) {
+              if (chrome.runtime.lastError) {
+                console.error("Error sending message:", chrome.runtime.lastError);
+                return;
+              }
+              
+              if (response && response.success) {
+                processedCount++;
+                updateStatusIndicator(`Collecting connections: ${processedCount} processed`);
+              }
             });
-            
-            processedCount++;
-            updateStatusIndicator(`Collecting connections: ${processedCount} processed`);
           }
         } catch (error) {
-          console.error('Error processing connection card:', error);
+          console.error('Error processing profile link:', error);
         }
         
         // Process next with delay
-        setTimeout(() => processNextConnection(index + 1), delay);
+        setTimeout(() => processNextProfile(index + 1), delay);
       }
       
       // Start processing
-      processNextConnection(0);
+      processNextProfile(0);
     }
     
     // Start the collection

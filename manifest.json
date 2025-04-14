@@ -3,12 +3,12 @@
     "name": "LinkedIn Data Collector",
     "version": "1.0",
     "description": "Collect and organize LinkedIn profile data",
-    "permissions": [
-      "storage",
-      "activeTab",
-      "scripting",
-      "tabs"
-    ],
+"permissions": [
+  "storage",
+  "activeTab",
+  "scripting",
+  "tabs"
+],
     "host_permissions": [
       "https://*.linkedin.com/*"
     ],
@@ -19,5 +19,14 @@
         "48": "images/icon48.png",
         "128": "images/icon128.png"
       }
-    }
-}
+    },
+    "background": {
+      "service_worker": "background.js"
+    },
+    "content_scripts": [
+      {
+        "matches": ["https://*.linkedin.com/*"],
+        "js": ["content.js", "api.js"]
+      }
+    ]
+  }

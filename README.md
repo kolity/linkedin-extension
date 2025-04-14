@@ -22,10 +22,11 @@ If you want to store data in your own database:
    ```
    npm install
    ```
-3. Create a `.env` file with your MongoDB connection string:
+3. Create a `.env` file with your PostGreSql connection string:
    ```
-   MONGODB_URI=mongodb://localhost:27017/linkedin_data
    PORT=3000
+    DATABASE_URL="postgresql://postgres:password@localhost:5432/linkedindb"
+    NODE_ENV=development
    ```
 4. Start the server:
    ```
